@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     private let calendar = Calendar.mondayFirst
+    private let monthFormatter: DateFormatter
 
     @State private var displayMonth: Date
     @State private var shiftAssignments: [Date: ShiftType]
@@ -20,6 +21,12 @@ struct ContentView: View {
         let initialMonth = calendar.startOfMonth(for: Date())
         _displayMonth = State(initialValue: initialMonth)
         _shiftAssignments = State(initialValue: ShiftType.sampleAssignments(for: initialMonth, calendar: calendar))
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.calendar = calendar
+        formatter.dateFormat = "MMMM yyyy"
+        monthFormatter = formatter
     }
 
     var body: some View {
@@ -32,6 +39,7 @@ struct ContentView: View {
             }
             .padding()
             .navigationTitle("")
+            .gesture(monthSwipeGesture)
             .toolbar {
                 if selectedDate != nil {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -62,29 +70,9 @@ struct ContentView: View {
     }
 
     private var monthHeader: some View {
-        HStack {
-            Button {
-                changeMonth(by: -1)
-            } label: {
-                Image(systemName: "chevron.left")
-            }
-
-            Spacer()
-
-            Text(displayMonth, format: Date.FormatStyle(locale: Locale(identifier: "zh_CN"))
-                .year()
-                .month(.wide))
-                .font(.title2)
-                .fontWeight(.semibold)
-
-            Spacer()
-
-            Button {
-                changeMonth(by: 1)
-            } label: {
-                Image(systemName: "chevron.right")
-            }
-        }
+        Text(monthFormatter.string(from: displayMonth))
+            .font(.title2)
+            .fontWeight(.semibold)
     }
 
     private var weekdayHeader: some View {
@@ -104,7 +92,7 @@ struct ContentView: View {
         let dates = calendarGridDates(for: displayMonth)
         let columns = Array(repeating: GridItem(.flexible(), spacing: 8), count: 7)
 
-        return LazyVGrid(columns: columns, spacing: 10) {
+        return LazyVGrid(columns: columns, spacing: 0) {
             ForEach(Array(dates.enumerated()), id: \.offset) { index, date in
                 if let date {
                     let normalized = calendar.startOfDay(for: date)
@@ -124,6 +112,27 @@ struct ContentView: View {
                 }
             }
         }
+    }
+
+    private var monthSwipeGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onEnded { value in
+                let horizontal = value.translation.width
+                let vertical = value.translation.height
+                guard abs(horizontal) > 24 else {
+                    return
+                }
+
+                guard abs(horizontal) > abs(vertical) * 0.6 else {
+                    return
+                }
+
+                if horizontal < 0 {
+                    changeMonth(by: 1)
+                } else {
+                    changeMonth(by: -1)
+                }
+            }
     }
 
     private func changeMonth(by value: Int) {
