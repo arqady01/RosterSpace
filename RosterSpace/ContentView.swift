@@ -8,6 +8,22 @@
 import SwiftUI
 
 struct ContentView: View {
+    var body: some View {
+        TabView {
+            CalendarScreen()
+                .tabItem {
+                    Label("日历", systemImage: "calendar")
+                }
+
+            SettingsScreen()
+                .tabItem {
+                    Label("我的", systemImage: "person.crop.circle")
+                }
+        }
+    }
+}
+
+struct CalendarScreen: View {
     private let calendar = Calendar.mondayFirst
     private let monthFormatter: DateFormatter
 
@@ -40,19 +56,6 @@ struct ContentView: View {
             .padding()
             .navigationTitle("")
             .gesture(monthSwipeGesture)
-            .toolbar {
-                if selectedDate != nil {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button {
-                            isManagingShift = true
-                        } label: {
-                            Image(systemName: "line.3.horizontal.circle")
-                                .imageScale(.large)
-                        }
-                        .accessibilityLabel("管理班次")
-                    }
-                }
-            }
             .sheet(isPresented: $isManagingShift) {
                 if let selectedDate {
                     let normalizedDate = calendar.startOfDay(for: selectedDate)
@@ -70,9 +73,42 @@ struct ContentView: View {
     }
 
     private var monthHeader: some View {
-        Text(monthFormatter.string(from: displayMonth))
-            .font(.title2)
-            .fontWeight(.semibold)
+        HStack {
+            Text(monthFormatter.string(from: displayMonth))
+                .font(.title2)
+                .fontWeight(.semibold)
+
+            Spacer()
+
+            if let selectedDate {
+                let isTodaySelected = calendar.isDateInToday(selectedDate)
+
+                if !isTodaySelected {
+                    Button {
+                        jumpToToday()
+                    } label: {
+                        Text("今")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .background(
+                        Capsule()
+                            .stroke(Color.accentColor, lineWidth: 1.2)
+                    )
+                }
+
+                Button {
+                    isManagingShift = true
+                } label: {
+                    Image(systemName: "line.3.horizontal.circle")
+                        .imageScale(.large)
+                }
+                .accessibilityLabel("管理班次")
+            }
+        }
     }
 
     private var weekdayHeader: some View {
@@ -135,6 +171,13 @@ struct ContentView: View {
             }
     }
 
+private func jumpToToday() {
+        let today = calendar.startOfDay(for: Date())
+        displayMonth = calendar.startOfMonth(for: today)
+        selectedDate = today
+        ensureAssignmentsExist(for: displayMonth)
+    }
+
     private func changeMonth(by value: Int) {
         guard let newMonth = calendar.date(byAdding: .month, value: value, to: displayMonth) else { return }
         displayMonth = calendar.startOfMonth(for: newMonth)
@@ -175,6 +218,25 @@ struct ContentView: View {
             grid.append(contentsOf: Array(repeating: nil, count: 7 - remainder))
         }
         return grid
+    }
+}
+
+struct SettingsScreen: View {
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 12) {
+                Image(systemName: "person.crop.circle")
+                    .font(.system(size: 48))
+                    .foregroundStyle(.secondary)
+
+                Text("个人中心功能敬请期待")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color(.systemGroupedBackground))
+            .navigationTitle("我的")
+        }
     }
 }
 
