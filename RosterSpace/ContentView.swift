@@ -60,14 +60,18 @@ struct CalendarScreen: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 16) {
-                monthHeader
-                weekdayHeader
-                calendarGrid
-                coworkerSummary
-                Spacer()
+            ZStack {
+                DynamicShiftBackdrop(shift: activeShift)
+
+                VStack(spacing: 16) {
+                    monthHeader
+                    weekdayHeader
+                    calendarGrid
+                    coworkerSummary
+                    Spacer()
+                }
+                .padding()
             }
-            .padding()
             .navigationTitle("")
             .gesture(monthSwipeGesture)
             .sheet(isPresented: $isManagingShift) {
@@ -177,6 +181,15 @@ struct CalendarScreen: View {
         }
     }
 
+    private var activeShift: ShiftType {
+        if let selectedDate {
+            let normalized = calendar.startOfDay(for: selectedDate)
+            return shiftAssignments[normalized] ?? .none
+        }
+        let today = calendar.startOfDay(for: Date())
+        return shiftAssignments[today] ?? .none
+    }
+
     @ViewBuilder
     private var coworkerSummary: some View {
         if let selectedDate {
@@ -252,7 +265,7 @@ struct CalendarScreen: View {
             selectedDate = normalized
         }
         if shiftAssignments[normalized] == nil {
-            shiftAssignments[normalized] = .none
+            shiftAssignments[normalized] = ShiftType.none
         }
         if coworkerAssignments[normalized] == nil {
             coworkerAssignments[normalized] = Set<String>()
@@ -350,6 +363,294 @@ struct SettingsScreen: View {
 
     private func removeColleagues(at offsets: IndexSet) {
         colleagues.remove(atOffsets: offsets)
+    }
+}
+
+// MARK: - Dynamic Shift Backdrop
+
+private struct DynamicShiftBackdrop: View {
+    let shift: ShiftType
+
+    var body: some View {
+        GeometryReader { proxy in
+            let scene = shift.sceneConfig
+            ZStack {
+                GradientLayer(scene: scene)
+                ParticlesLayer(scene: scene, size: proxy.size)
+                LightRaysLayer(scene: scene)
+            }
+            .ignoresSafeArea()
+        }
+    }
+}
+
+private struct GradientLayer: View {
+    let scene: ShiftSceneConfig
+
+    var body: some View {
+        LinearGradient(
+            colors: scene.gradient.colors,
+            startPoint: scene.gradient.start,
+            endPoint: scene.gradient.end
+        )
+        .overlay(
+            RadialGradient(
+                colors: scene.gradient.overlayColors,
+                center: .top,
+                startRadius: 0,
+                endRadius: 600
+            )
+            .opacity(0.35)
+        )
+        .ignoresSafeArea()
+    }
+}
+
+private struct ParticlesLayer: View {
+    let scene: ShiftSceneConfig
+    let size: CGSize
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, canvasSize in
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                context.addFilter(.blur(radius: scene.particleBlur))
+                context.blendMode = .plusLighter
+                for index in 0..<scene.particleCount {
+                    let hashSeed = UInt64(truncatingIfNeeded: index &+ 1)
+                        &* 0x9E3779B97F4A7C15
+                        &+ 0xBF58476D1CE4E5B9
+                    var generator = SeededGenerator(seed: hashSeed)
+                    let baseX = Double.random(in: 0...1, using: &generator)
+                    let baseY = Double.random(in: 0...1, using: &generator)
+                    let amplitude = Double.random(in: 0.05...0.18, using: &generator) * Double(min(canvasSize.width, canvasSize.height))
+                    let sizeFactor = Double.random(in: 0.5...1.2, using: &generator)
+                    let phase = Double.random(in: 0...(2 * .pi), using: &generator)
+                    let swirl = Double.random(in: 0.2...0.8, using: &generator)
+
+                    let progress = time * scene.particleSpeed + phase
+                    let x = baseX * canvasSize.width + sin(progress) * amplitude
+                    let yBase = baseY * canvasSize.height
+                    let y = yBase - progress * scene.verticalLift * canvasSize.height + cos(progress * swirl) * amplitude * 0.25
+                    let heightRange = canvasSize.height + 120
+                    let yWrapped = (y + heightRange).truncatingRemainder(dividingBy: heightRange) - 60
+                    let xRange = canvasSize.width + 120
+                    let xWrapped = (x + xRange).truncatingRemainder(dividingBy: xRange) - 60
+
+                    let particleRect = CGRect(
+                        x: xWrapped,
+                        y: yWrapped,
+                        width: CGFloat(scene.particleBaseSize * sizeFactor),
+                        height: CGFloat(scene.particleBaseSize * sizeFactor)
+                    )
+
+                    let opacity = 0.25 + 0.5 * (sin(progress) + 1) / 2
+                    context.opacity = opacity
+                    context.fill(Path(ellipseIn: particleRect), with: .color(scene.particleColor))
+                }
+            }
+        }
+    }
+}
+
+private struct LightRaysLayer: View {
+    let scene: ShiftSceneConfig
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            LightRaysFrame(
+                scene: scene,
+                time: timeline.date.timeIntervalSinceReferenceDate
+            )
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct LightRaysFrame: View {
+    let scene: ShiftSceneConfig
+    let time: TimeInterval
+
+    var body: some View {
+        Canvas { context, size in
+            guard scene.lightOpacity > 0, scene.lightCount > 0 else { return }
+            let rect = CGRect(origin: .zero, size: size)
+            let baseHeight = rect.height * 1.6
+            let baseWidth = rect.width * 0.45
+            context.addFilter(.blur(radius: scene.lightBlur))
+            context.blendMode = .screen
+
+            for beamIndex in 0..<scene.lightCount {
+                let phase = Double(beamIndex) / Double(scene.lightCount)
+                let swing = sin((time * scene.lightSpeed) + phase * .pi * 2) * scene.lightSwing
+                let angle = CGFloat(swing)
+                let widthScale = 0.6 + 0.4 * Double(beamIndex + 1) / Double(scene.lightCount)
+                let beamWidth = CGFloat(widthScale) * baseWidth
+                let beamHeight = baseHeight * (0.85 + 0.15 * CGFloat(beamIndex) / CGFloat(scene.lightCount))
+                let cornerRadius = beamWidth * CGFloat(0.35)
+
+                var beam = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .path(in: CGRect(x: -beamWidth / 2, y: -beamHeight, width: beamWidth, height: beamHeight))
+
+                var transform = CGAffineTransform(translationX: rect.midX, y: rect.midY * 0.9)
+                transform = transform.rotated(by: angle)
+                beam = beam.applying(transform)
+
+                let pulse = 0.8 + 0.2 * sin(time * scene.lightSpeed * 1.5 + phase * .pi)
+                context.opacity = scene.lightOpacity * pulse
+
+                let bounds = beam.boundingRect
+                let gradient = Gradient(stops: [
+                    .init(color: scene.lightColor.opacity(0), location: 0),
+                    .init(color: scene.lightColor.opacity(scene.lightOpacity), location: 0.5),
+                    .init(color: scene.lightColor.opacity(0), location: 1)
+                ])
+                context.fill(
+                    beam,
+                    with: .linearGradient(
+                        gradient,
+                        startPoint: CGPoint(x: bounds.midX, y: bounds.minY),
+                        endPoint: CGPoint(x: bounds.midX, y: bounds.maxY)
+                    )
+                )
+            }
+        }
+    }
+}
+
+private struct ShiftSceneConfig {
+    struct GradientSpec {
+        let colors: [Color]
+        let overlayColors: [Color]
+        let start: UnitPoint
+        let end: UnitPoint
+    }
+
+    let gradient: GradientSpec
+    let particleColor: Color
+    let particleCount: Int
+    let particleSpeed: Double
+    let particleBaseSize: Double
+    let particleBlur: CGFloat
+    let verticalLift: Double
+    let lightColor: Color
+    let lightOpacity: Double
+    let lightSwing: Double
+    let lightSpeed: Double
+    let lightCount: Int
+    let lightBlur: CGFloat
+}
+
+private struct SeededGenerator: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) {
+        state = seed &+ 0x9E3779B97F4A7C15
+    }
+
+    mutating func next() -> UInt64 {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        return state
+    }
+}
+
+private extension ShiftType {
+    var sceneConfig: ShiftSceneConfig {
+        switch self {
+        case .morning:
+            return ShiftSceneConfig(
+                gradient: .init(
+                    colors: [Color(hex: 0xFFE28D), Color(hex: 0xD5F4FF)],
+                    overlayColors: [Color.white.opacity(0.35), Color.clear],
+                    start: .bottom,
+                    end: .top
+                ),
+                particleColor: Color.white.opacity(0.4),
+                particleCount: 110,
+                particleSpeed: 0.12,
+                particleBaseSize: 18,
+                particleBlur: 6,
+                verticalLift: 0.04,
+                lightColor: Color.white,
+                lightOpacity: 0.55,
+                lightSwing: 0.35,
+                lightSpeed: 0.85,
+                lightCount: 5,
+                lightBlur: 26
+            )
+        case .afternoon:
+            return ShiftSceneConfig(
+                gradient: .init(
+                    colors: [Color(hex: 0xFFB067), Color(hex: 0xFFF5E0)],
+                    overlayColors: [Color.white.opacity(0.28), Color.clear],
+                    start: .bottom,
+                    end: .top
+                ),
+                particleColor: Color.orange.opacity(0.35),
+                particleCount: 130,
+                particleSpeed: 0.18,
+                particleBaseSize: 16,
+                particleBlur: 5,
+                verticalLift: 0.06,
+                lightColor: Color.white,
+                lightOpacity: 0.65,
+                lightSwing: 0.42,
+                lightSpeed: 1.05,
+                lightCount: 6,
+                lightBlur: 24
+            )
+        case .evening:
+            return ShiftSceneConfig(
+                gradient: .init(
+                    colors: [Color(hex: 0x2D3A6A), Color(hex: 0x4A5AA5)],
+                    overlayColors: [Color(hex: 0x90A6FF).opacity(0.4), Color.clear],
+                    start: .bottom,
+                    end: .top
+                ),
+                particleColor: Color.white.opacity(0.24),
+                particleCount: 140,
+                particleSpeed: 0.08,
+                particleBaseSize: 14,
+                particleBlur: 8,
+                verticalLift: 0.03,
+                lightColor: Color(hex: 0x90A6FF),
+                lightOpacity: 0.45,
+                lightSwing: 0.28,
+                lightSpeed: 0.7,
+                lightCount: 4,
+                lightBlur: 34
+            )
+        default:
+            return ShiftSceneConfig(
+                gradient: .init(
+                    colors: [Color(hex: 0xEEF1F6), Color(hex: 0xF6F7FA)],
+                    overlayColors: [Color.white.opacity(0.2), Color.clear],
+                    start: .top,
+                    end: .bottom
+                ),
+                particleColor: Color.gray.opacity(0.18),
+                particleCount: 60,
+                particleSpeed: 0.05,
+                particleBaseSize: 12,
+                particleBlur: 4,
+                verticalLift: 0.02,
+                lightColor: Color.white.opacity(0.8),
+                lightOpacity: 0.3,
+                lightSwing: 0.2,
+                lightSpeed: 0.55,
+                lightCount: 3,
+                lightBlur: 20
+            )
+        }
+    }
+}
+
+private extension Color {
+    init(hex: UInt32) {
+        let r = Double((hex >> 16) & 0xFF) / 255.0
+        let g = Double((hex >> 8) & 0xFF) / 255.0
+        let b = Double(hex & 0xFF) / 255.0
+        self.init(red: r, green: g, blue: b)
     }
 }
 
