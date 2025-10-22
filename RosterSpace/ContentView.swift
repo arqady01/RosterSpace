@@ -8,14 +8,16 @@
 import SwiftUI
 
 struct ContentView: View {
+    @State private var colleagues: [String] = []
+
     var body: some View {
         TabView {
-            CalendarScreen()
+            CalendarScreen(colleagues: $colleagues)
                 .tabItem {
                     Label("日历", systemImage: "calendar")
                 }
 
-            SettingsScreen()
+            SettingsScreen(colleagues: $colleagues)
                 .tabItem {
                     Label("我的", systemImage: "person.crop.circle")
                 }
@@ -24,25 +26,36 @@ struct ContentView: View {
 }
 
 struct CalendarScreen: View {
+    @Binding private var colleagues: [String]
     private let calendar = Calendar.mondayFirst
     private let monthFormatter: DateFormatter
+    private let dayFormatter: DateFormatter
 
     @State private var displayMonth: Date
     @State private var shiftAssignments: [Date: ShiftType]
     @State private var selectedDate: Date?
     @State private var isManagingShift = false
+    @State private var coworkerAssignments: [Date: Set<String>]
 
-    init() {
+    init(colleagues: Binding<[String]>) {
+        self._colleagues = colleagues
         let calendar = Calendar.mondayFirst
         let initialMonth = calendar.startOfMonth(for: Date())
         _displayMonth = State(initialValue: initialMonth)
         _shiftAssignments = State(initialValue: ShiftType.sampleAssignments(for: initialMonth, calendar: calendar))
+        _coworkerAssignments = State(initialValue: [:])
 
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
         formatter.calendar = calendar
         formatter.dateFormat = "MMMM yyyy"
         monthFormatter = formatter
+
+        let dayFormatter = DateFormatter()
+        dayFormatter.locale = Locale(identifier: "zh_CN")
+        dayFormatter.calendar = calendar
+        dayFormatter.dateFormat = "M月d日"
+        self.dayFormatter = dayFormatter
     }
 
     var body: some View {
@@ -51,6 +64,7 @@ struct CalendarScreen: View {
                 monthHeader
                 weekdayHeader
                 calendarGrid
+                coworkerSummary
                 Spacer()
             }
             .padding()
@@ -63,12 +77,25 @@ struct CalendarScreen: View {
                         date: normalizedDate,
                         shift: Binding(
                             get: { shiftAssignments[normalizedDate] ?? .none },
-                            set: { shiftAssignments[normalizedDate] = $0 }
+                            set: {
+                                shiftAssignments[normalizedDate] = $0
+                                if !$0.allowsCoworkers {
+                                    coworkerAssignments[normalizedDate] = Set<String>()
+                                }
+                            }
                         ),
+                        coworkers: Binding(
+                            get: { coworkerAssignments[normalizedDate] ?? Set<String>() },
+                            set: { coworkerAssignments[normalizedDate] = $0 }
+                        ),
+                        colleagues: colleagues,
                         calendar: calendar
                     )
                 }
             }
+        }
+        .onChange(of: colleagues) { _ in
+            pruneCoworkerSelections()
         }
     }
 
@@ -150,6 +177,35 @@ struct CalendarScreen: View {
         }
     }
 
+    @ViewBuilder
+    private var coworkerSummary: some View {
+        if let selectedDate {
+            let normalized = calendar.startOfDay(for: selectedDate)
+            if let set = coworkerAssignments[normalized], !set.isEmpty {
+                let names = set.sorted()
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.2.fill")
+                            .foregroundStyle(Color.accentColor)
+                        Text(dayFormatter.string(from: normalized))
+                            .font(.headline)
+                    }
+
+                    Text(names.joined(separator: "、"))
+                        .font(.subheadline)
+                        .foregroundStyle(.primary)
+                }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color(.secondarySystemBackground))
+                )
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+    }
+
     private var monthSwipeGesture: some Gesture {
         DragGesture(minimumDistance: 10)
             .onEnded { value in
@@ -171,11 +227,14 @@ struct CalendarScreen: View {
             }
     }
 
-private func jumpToToday() {
+    private func jumpToToday() {
         let today = calendar.startOfDay(for: Date())
         displayMonth = calendar.startOfMonth(for: today)
         selectedDate = today
         ensureAssignmentsExist(for: displayMonth)
+        if coworkerAssignments[today] == nil {
+            coworkerAssignments[today] = Set<String>()
+        }
     }
 
     private func changeMonth(by value: Int) {
@@ -195,6 +254,9 @@ private func jumpToToday() {
         if shiftAssignments[normalized] == nil {
             shiftAssignments[normalized] = .none
         }
+        if coworkerAssignments[normalized] == nil {
+            coworkerAssignments[normalized] = Set<String>()
+        }
     }
 
     private func ensureAssignmentsExist(for month: Date) {
@@ -204,6 +266,17 @@ private func jumpToToday() {
             if shiftAssignments[normalized] == nil {
                 shiftAssignments[normalized] = ShiftType.defaultAssignment(for: day, calendar: calendar)
             }
+            if coworkerAssignments[normalized] == nil {
+                coworkerAssignments[normalized] = Set<String>()
+            }
+        }
+    }
+
+    private func pruneCoworkerSelections() {
+        let validNames = Set(colleagues)
+        for (date, selections) in coworkerAssignments {
+            let filtered = selections.filter { validNames.contains($0) }
+            coworkerAssignments[date] = Set(filtered)
         }
     }
 
@@ -222,21 +295,61 @@ private func jumpToToday() {
 }
 
 struct SettingsScreen: View {
+    @Binding var colleagues: [String]
+    @State private var newColleagueName: String = ""
+
     var body: some View {
         NavigationStack {
-            VStack(spacing: 12) {
-                Image(systemName: "person.crop.circle")
-                    .font(.system(size: 48))
-                    .foregroundStyle(.secondary)
+            List {
+                Section(header: Text("添加同事")) {
+                    HStack {
+                        TextField("输入姓名", text: $newColleagueName)
+                            .textInputAutocapitalization(.words)
+                            .disableAutocorrection(true)
 
-                Text("个人中心功能敬请期待")
-                    .font(.title3)
-                    .foregroundStyle(.secondary)
+                        Button("添加") {
+                            addColleague()
+                        }
+                        .disabled(!canAddColleague)
+                    }
+                }
+
+                Section(header: Text("同事名单")) {
+                    if colleagues.isEmpty {
+                        Text("暂无同事，请先添加。")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(colleagues, id: \.self) { colleague in
+                            Text(colleague)
+                        }
+                        .onDelete(perform: removeColleagues)
+                    }
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(.systemGroupedBackground))
             .navigationTitle("我的")
+            .toolbar {
+                EditButton()
+            }
         }
+    }
+
+    private var canAddColleague: Bool {
+        let trimmed = newColleagueName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = trimmed.lowercased()
+        return !trimmed.isEmpty && !colleagues.contains(where: { $0.lowercased() == normalized })
+    }
+
+    private func addColleague() {
+        let trimmed = newColleagueName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let normalized = trimmed.lowercased()
+        guard !colleagues.contains(where: { $0.lowercased() == normalized }) else { return }
+        colleagues.append(trimmed)
+        newColleagueName = ""
+    }
+
+    private func removeColleagues(at offsets: IndexSet) {
+        colleagues.remove(atOffsets: offsets)
     }
 }
 
@@ -318,6 +431,8 @@ private struct DayCell: View {
 private struct ShiftManagementView: View {
     let date: Date
     @Binding var shift: ShiftType
+    @Binding var coworkers: Set<String>
+    let colleagues: [String]
     let calendar: Calendar
     @Environment(\.dismiss) private var dismiss
 
@@ -341,9 +456,13 @@ private struct ShiftManagementView: View {
                     }
                 }
 
+                coworkersSection
+                    .animation(.default, value: shift)
+
                 Section {
                     Button(role: .destructive) {
                         shift = .none
+                        coworkers.removeAll()
                     } label: {
                         Text("清除班次")
                     }
@@ -358,6 +477,56 @@ private struct ShiftManagementView: View {
                     }
                 }
             }
+            .onChange(of: shift) { newValue in
+                if !newValue.allowsCoworkers {
+                    coworkers.removeAll()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var coworkersSection: some View {
+        Section(header: Text("共事成员")) {
+            if shift.isRestDay {
+                Text("休息日无需选择共事成员。")
+                    .foregroundStyle(.secondary)
+            } else if shift == .none {
+                Text("请先选择班次后再设置共事成员。")
+                    .foregroundStyle(.secondary)
+            } else if colleagues.isEmpty {
+                Text("暂无同事名单，请前往“我的”页面添加。")
+                    .foregroundStyle(.secondary)
+            } else {
+                ForEach(colleagues, id: \.self) { colleague in
+                    HStack {
+                        Text(colleague)
+                        Spacer()
+                        if coworkers.contains(colleague) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(Color.accentColor)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        toggleCoworker(colleague)
+                    }
+                }
+
+                if coworkers.isEmpty {
+                    Text("轻点姓名以选择共事成员。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func toggleCoworker(_ name: String) {
+        if coworkers.contains(name) {
+            coworkers.remove(name)
+        } else {
+            coworkers.insert(name)
         }
     }
 
@@ -409,6 +578,15 @@ private enum ShiftType: String, CaseIterable, Identifiable {
 
     var isRestDay: Bool {
         self == .rest
+    }
+
+    var allowsCoworkers: Bool {
+        switch self {
+        case .morning, .afternoon, .evening:
+            return true
+        default:
+            return false
+        }
     }
 
     static var managementOptions: [ShiftType] {
