@@ -31,7 +31,7 @@ struct ContentView: View {
                 Spacer()
             }
             .padding()
-            .navigationTitle("排班日历")
+            .navigationTitle("")
             .toolbar {
                 if selectedDate != nil {
                     ToolbarItem(placement: .topBarTrailing) {
@@ -71,7 +71,7 @@ struct ContentView: View {
 
             Spacer()
 
-            Text(displayMonth, format: Date.FormatStyle()
+            Text(displayMonth, format: Date.FormatStyle(locale: Locale(identifier: "zh_CN"))
                 .year()
                 .month(.wide))
                 .font(.title2)
@@ -184,8 +184,10 @@ private struct DayCell: View {
                 if isSelected {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(Color.accentColor.opacity(0.12))
+                        .padding(.horizontal, -4)
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(Color.accentColor, lineWidth: 2)
+                        .padding(.horizontal, -4)
                 }
 
                 VStack {
@@ -193,7 +195,7 @@ private struct DayCell: View {
 
                     Text(dayNumber)
                         .font(.system(.title3, design: .monospaced))
-                        .fontWeight(.semibold)
+                        .fontWeight(.regular)
                         .foregroundStyle(.primary)
 
                     Spacer(minLength: 4)
@@ -205,11 +207,11 @@ private struct DayCell: View {
                     VStack {
                         Spacer()
                         Text(badge.text)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(.system(size: 10, weight: .semibold))
                             .fontWeight(.semibold)
                             .foregroundColor(badge.textColor)
-                            .padding(.vertical, 4)
-                            .padding(.horizontal, 10)
+                            .padding(.vertical, 2)
+                            .padding(.horizontal, 6)
                             .background(
                                 Capsule()
                                     .fill(badge.backgroundColor)
@@ -228,7 +230,8 @@ private struct DayCell: View {
                             Circle()
                                 .fill(Color.green)
                         )
-                        .padding([.top, .trailing], 6)
+                        .padding(.top, 12)
+                        .padding(.trailing, -2)
                 }
             }
         }
