@@ -8,55 +8,52 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var colleagues: [String] = []
+    @StateObject private var dataStore = RosterDataStore()
 
     var body: some View {
         TabView {
-            CalendarScreen(colleagues: $colleagues)
+            CalendarScreen()
                 .tabItem {
                     Label("日历", systemImage: "calendar")
                 }
 
-            SettingsScreen(colleagues: $colleagues)
+            StatsScreen()
+                .tabItem {
+                    Label("统计", systemImage: "chart.bar.xaxis")
+                }
+
+            SettingsScreen()
                 .tabItem {
                     Label("我的", systemImage: "person.crop.circle")
                 }
         }
+        .environmentObject(dataStore)
     }
 }
 
 struct CalendarScreen: View {
-    @Binding private var colleagues: [String]
+    @EnvironmentObject private var store: RosterDataStore
     private let calendar = Calendar.mondayFirst
-    private let monthFormatter: DateFormatter
-    private let dayFormatter: DateFormatter
 
-    @State private var displayMonth: Date
-    @State private var shiftAssignments: [Date: ShiftType]
-    @State private var selectedDate: Date?
-    @State private var isManagingShift = false
-    @State private var coworkerAssignments: [Date: Set<String>]
-
-    init(colleagues: Binding<[String]>) {
-        self._colleagues = colleagues
-        let calendar = Calendar.mondayFirst
-        let initialMonth = calendar.startOfMonth(for: Date())
-        _displayMonth = State(initialValue: initialMonth)
-        _shiftAssignments = State(initialValue: ShiftType.sampleAssignments(for: initialMonth, calendar: calendar))
-        _coworkerAssignments = State(initialValue: [:])
-
+    private let monthFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "zh_CN")
-        formatter.calendar = calendar
+        formatter.calendar = Calendar.mondayFirst
         formatter.dateFormat = "MMMM yyyy"
-        monthFormatter = formatter
+        return formatter
+    }()
 
-        let dayFormatter = DateFormatter()
-        dayFormatter.locale = Locale(identifier: "zh_CN")
-        dayFormatter.calendar = calendar
-        dayFormatter.dateFormat = "M月d日"
-        self.dayFormatter = dayFormatter
-    }
+    private let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.calendar = Calendar.mondayFirst
+        formatter.dateFormat = "M月d日"
+        return formatter
+    }()
+
+    @State private var displayMonth: Date = Calendar.mondayFirst.startOfMonth(for: Date())
+    @State private var selectedDate: Date?
+    @State private var isManagingShift = false
 
     var body: some View {
         NavigationStack {
@@ -80,26 +77,20 @@ struct CalendarScreen: View {
                     ShiftManagementView(
                         date: normalizedDate,
                         shift: Binding(
-                            get: { shiftAssignments[normalizedDate] ?? .none },
-                            set: {
-                                shiftAssignments[normalizedDate] = $0
-                                if !$0.allowsCoworkers {
-                                    coworkerAssignments[normalizedDate] = Set<String>()
-                                }
-                            }
+                            get: { store.shift(on: normalizedDate) },
+                            set: { store.setShift($0, for: normalizedDate) }
                         ),
                         coworkers: Binding(
-                            get: { coworkerAssignments[normalizedDate] ?? Set<String>() },
-                            set: { coworkerAssignments[normalizedDate] = $0 }
+                            get: { store.coworkers(on: normalizedDate) },
+                            set: { store.setCoworkers($0, for: normalizedDate) }
                         ),
-                        colleagues: colleagues,
                         calendar: calendar
                     )
                 }
             }
         }
-        .onChange(of: colleagues) { _ in
-            pruneCoworkerSelections()
+        .onAppear {
+            store.ensureMonthAvailable(containing: displayMonth)
         }
     }
 
@@ -166,7 +157,7 @@ struct CalendarScreen: View {
                     let isSelected = selectedDate.map { calendar.isDate($0, inSameDayAs: date) } ?? false
                     DayCell(
                         date: date,
-                        shift: shiftAssignments[normalized] ?? .none,
+                        shift: store.shift(on: normalized),
                         isSelected: isSelected,
                         calendar: calendar
                     ) {
@@ -184,18 +175,21 @@ struct CalendarScreen: View {
     private var activeShift: ShiftType {
         if let selectedDate {
             let normalized = calendar.startOfDay(for: selectedDate)
-            return shiftAssignments[normalized] ?? .none
+            store.ensureDayAvailable(normalized)
+            return store.shift(on: normalized)
         }
         let today = calendar.startOfDay(for: Date())
-        return shiftAssignments[today] ?? .none
+        store.ensureDayAvailable(today)
+        return store.shift(on: today)
     }
 
     @ViewBuilder
     private var coworkerSummary: some View {
         if let selectedDate {
             let normalized = calendar.startOfDay(for: selectedDate)
-            if let set = coworkerAssignments[normalized], !set.isEmpty {
-                let names = set.sorted()
+            let selections = store.coworkers(on: normalized)
+            if !selections.isEmpty {
+                let names = selections.sorted()
                 VStack(alignment: .leading, spacing: 8) {
                     HStack(spacing: 8) {
                         Image(systemName: "person.2.fill")
@@ -248,16 +242,14 @@ struct CalendarScreen: View {
         let today = calendar.startOfDay(for: Date())
         displayMonth = calendar.startOfMonth(for: today)
         selectedDate = today
-        ensureAssignmentsExist(for: displayMonth)
-        if coworkerAssignments[today] == nil {
-            coworkerAssignments[today] = Set<String>()
-        }
+        store.ensureMonthAvailable(containing: displayMonth)
+        store.ensureDayAvailable(today)
     }
 
     private func changeMonth(by value: Int) {
         guard let newMonth = calendar.date(byAdding: .month, value: value, to: displayMonth) else { return }
         displayMonth = calendar.startOfMonth(for: newMonth)
-        ensureAssignmentsExist(for: displayMonth)
+        store.ensureMonthAvailable(containing: displayMonth)
         if let selectedDate, !calendar.isDate(selectedDate, equalTo: displayMonth, toGranularity: .month) {
             self.selectedDate = nil
         }
@@ -268,33 +260,7 @@ struct CalendarScreen: View {
         withAnimation {
             selectedDate = normalized
         }
-        if shiftAssignments[normalized] == nil {
-            shiftAssignments[normalized] = ShiftType.none
-        }
-        if coworkerAssignments[normalized] == nil {
-            coworkerAssignments[normalized] = Set<String>()
-        }
-    }
-
-    private func ensureAssignmentsExist(for month: Date) {
-        let monthStart = calendar.startOfMonth(for: month)
-        for day in calendar.daysInMonth(for: monthStart) {
-            let normalized = calendar.startOfDay(for: day)
-            if shiftAssignments[normalized] == nil {
-                shiftAssignments[normalized] = ShiftType.defaultAssignment(for: day, calendar: calendar)
-            }
-            if coworkerAssignments[normalized] == nil {
-                coworkerAssignments[normalized] = Set<String>()
-            }
-        }
-    }
-
-    private func pruneCoworkerSelections() {
-        let validNames = Set(colleagues)
-        for (date, selections) in coworkerAssignments {
-            let filtered = selections.filter { validNames.contains($0) }
-            coworkerAssignments[date] = Set(filtered)
-        }
+        store.ensureDayAvailable(normalized)
     }
 
     private func calendarGridDates(for month: Date) -> [Date?] {
@@ -312,14 +278,14 @@ struct CalendarScreen: View {
 }
 
 struct SettingsScreen: View {
-    @Binding var colleagues: [String]
+    @EnvironmentObject private var store: RosterDataStore
 
     var body: some View {
         NavigationStack {
             List {
                 Section {
                     NavigationLink {
-                        ColleagueManagementView(colleagues: $colleagues)
+                        ColleagueManagementView()
                     } label: {
                         Label("同事名单管理", systemImage: "person.2.badge.gearshape")
                             .font(.headline)
@@ -332,7 +298,7 @@ struct SettingsScreen: View {
 }
 
 private struct ColleagueManagementView: View {
-    @Binding var colleagues: [String]
+    @EnvironmentObject private var store: RosterDataStore
     @State private var newColleagueName: String = ""
     @FocusState private var isInputFocused: Bool
     @State private var isInputPresented = false
@@ -391,11 +357,11 @@ private struct ColleagueManagementView: View {
             }
 
             Section(header: Text("同事名单")) {
-                if colleagues.isEmpty {
+                if store.colleagues.isEmpty {
                     Text("暂无同事，请先添加。")
                         .foregroundStyle(.secondary)
                 } else {
-                    ForEach(colleagues, id: \.self) { colleague in
+                    ForEach(store.colleagues, id: \.self) { colleague in
                         Text(colleague)
                     }
                     .onDelete(perform: removeColleagues)
@@ -417,21 +383,21 @@ private struct ColleagueManagementView: View {
     private var canAddColleague: Bool {
         let trimmed = newColleagueName.trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = trimmed.lowercased()
-        return !trimmed.isEmpty && !colleagues.contains(where: { $0.lowercased() == normalized })
+        return !trimmed.isEmpty && !store.colleagues.contains(where: { $0.lowercased() == normalized })
     }
 
     private func addColleague() {
         let trimmed = newColleagueName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         let normalized = trimmed.lowercased()
-        guard !colleagues.contains(where: { $0.lowercased() == normalized }) else { return }
-        colleagues.append(trimmed)
+        guard !store.colleagues.contains(where: { $0.lowercased() == normalized }) else { return }
+        store.addColleague(trimmed)
         newColleagueName = ""
         dismissInput()
     }
 
     private func removeColleagues(at offsets: IndexSet) {
-        colleagues.remove(atOffsets: offsets)
+        store.removeColleagues(at: offsets)
     }
 
     private func dismissInput() {
@@ -1164,8 +1130,8 @@ private struct ShiftManagementView: View {
     let date: Date
     @Binding var shift: ShiftType
     @Binding var coworkers: Set<String>
-    let colleagues: [String]
     let calendar: Calendar
+    @EnvironmentObject private var store: RosterDataStore
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -1226,11 +1192,11 @@ private struct ShiftManagementView: View {
             } else if shift == .none {
                 Text("请先选择班次后再设置共事成员。")
                     .foregroundStyle(.secondary)
-            } else if colleagues.isEmpty {
+            } else if store.colleagues.isEmpty {
                 Text("暂无同事名单，请前往“我的”页面添加。")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(colleagues, id: \.self) { colleague in
+                ForEach(store.colleagues, id: \.self) { colleague in
                     HStack {
                         Text(colleague)
                         Spacer()
@@ -1271,7 +1237,7 @@ private struct ShiftManagementView: View {
     }
 }
 
-private enum ShiftType: String, CaseIterable, Identifiable {
+enum ShiftType: String, CaseIterable, Identifiable {
     case none
     case rest
     case morning
@@ -1352,13 +1318,13 @@ private enum ShiftType: String, CaseIterable, Identifiable {
     }
 }
 
-private struct ShiftBadgeStyle {
+struct ShiftBadgeStyle {
     let text: String
     let textColor: Color
     let backgroundColor: Color
 }
 
-private extension Calendar {
+extension Calendar {
     static var mondayFirst: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.firstWeekday = 2
