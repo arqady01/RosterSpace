@@ -212,7 +212,11 @@ struct CalendarScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color(.secondarySystemBackground))
+                        .fill(.thinMaterial.opacity(0.55))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(Color.white.opacity(0.12))
                 )
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -309,39 +313,103 @@ struct CalendarScreen: View {
 
 struct SettingsScreen: View {
     @Binding var colleagues: [String]
-    @State private var newColleagueName: String = ""
 
     var body: some View {
         NavigationStack {
             List {
-                Section(header: Text("添加同事")) {
-                    HStack {
-                        TextField("输入姓名", text: $newColleagueName)
-                            .textInputAutocapitalization(.words)
-                            .disableAutocorrection(true)
-
-                        Button("添加") {
-                            addColleague()
-                        }
-                        .disabled(!canAddColleague)
-                    }
-                }
-
-                Section(header: Text("同事名单")) {
-                    if colleagues.isEmpty {
-                        Text("暂无同事，请先添加。")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(colleagues, id: \.self) { colleague in
-                            Text(colleague)
-                        }
-                        .onDelete(perform: removeColleagues)
+                Section {
+                    NavigationLink {
+                        ColleagueManagementView(colleagues: $colleagues)
+                    } label: {
+                        Label("同事名单管理", systemImage: "person.2.badge.gearshape")
+                            .font(.headline)
                     }
                 }
             }
             .navigationTitle("我的")
-            .toolbar {
+        }
+    }
+}
+
+private struct ColleagueManagementView: View {
+    @Binding var colleagues: [String]
+    @State private var newColleagueName: String = ""
+    @FocusState private var isInputFocused: Bool
+    @State private var isInputPresented = false
+
+    var body: some View {
+        List {
+            Section(header: Text("添加同事")) {
+                Button {
+                    isInputPresented = true
+                    DispatchQueue.main.async {
+                        isInputFocused = true
+                    }
+                } label: {
+                    HStack {
+                        Label("添加新同事", systemImage: "plus.circle.fill")
+                            .font(.headline)
+                        Spacer()
+                        if !newColleagueName.isEmpty {
+                            Text(newColleagueName)
+                                .foregroundStyle(.secondary)
+                        }
+                        Image(systemName: "keyboard")
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                if isInputPresented || !newColleagueName.isEmpty || isInputFocused {
+                    HStack(spacing: 12) {
+                        TextField("输入姓名", text: $newColleagueName)
+                            .textInputAutocapitalization(.words)
+                            .disableAutocorrection(true)
+                            .focused($isInputFocused)
+                            .submitLabel(.done)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .fill(Color(.secondarySystemBackground))
+                            )
+                            .onSubmit { addColleague() }
+
+                        Button("添加") { addColleague() }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!canAddColleague)
+
+                        Button(action: dismissInput) {
+                            Image(systemName: "xmark.circle.fill")
+                                .symbolRenderingMode(.hierarchical)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
+                    }
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+
+            Section(header: Text("同事名单")) {
+                if colleagues.isEmpty {
+                    Text("暂无同事，请先添加。")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(colleagues, id: \.self) { colleague in
+                        Text(colleague)
+                    }
+                    .onDelete(perform: removeColleagues)
+                }
+            }
+        }
+        .navigationTitle("同事名单管理")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
                 EditButton()
+            }
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("关闭") { dismissInput() }
             }
         }
     }
@@ -359,10 +427,16 @@ struct SettingsScreen: View {
         guard !colleagues.contains(where: { $0.lowercased() == normalized }) else { return }
         colleagues.append(trimmed)
         newColleagueName = ""
+        dismissInput()
     }
 
     private func removeColleagues(at offsets: IndexSet) {
         colleagues.remove(atOffsets: offsets)
+    }
+
+    private func dismissInput() {
+        isInputFocused = false
+        isInputPresented = false
     }
 }
 
@@ -377,6 +451,18 @@ private struct DynamicShiftBackdrop: View {
             ZStack {
                 GradientLayer(scene: scene)
                 ParticlesLayer(scene: scene, size: proxy.size)
+                if scene.cloudsEnabled {
+                    CloudLayer(scene: scene)
+                }
+                if scene.sunEnabled {
+                    SunLayer(scene: scene)
+                }
+                if scene.starsEnabled {
+                    StarfieldLayer(scene: scene)
+                }
+                if scene.shootingStarsEnabled {
+                    ShootingStarLayer(scene: scene)
+                }
                 LightRaysLayer(scene: scene)
             }
             .ignoresSafeArea()
@@ -518,6 +604,251 @@ private struct LightRaysFrame: View {
     }
 }
 
+private struct CloudLayer: View {
+    let scene: ShiftSceneConfig
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                guard scene.cloudsEnabled, scene.cloudCount > 0 else { return }
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                context.blendMode = .screen
+                for index in 0..<scene.cloudCount {
+                    let hashSeed = UInt64(truncatingIfNeeded: index &+ 17) &* 0xBF58476D1CE4E5B9 &+ 0x94D049BB133111EB
+                    var generator = SeededGenerator(seed: hashSeed)
+                    let baseX = Double.random(in: 0...1, using: &generator)
+                    let baseY = Double.random(in: 0.02...0.35, using: &generator)
+                    let scale = Double.random(in: 0.7...1.15, using: &generator)
+                    let speed = scene.cloudSpeed * Double.random(in: 0.4...0.8, using: &generator)
+                    let offset = (baseX + time * speed).truncatingRemainder(dividingBy: 1)
+                    let x = CGFloat(offset) * (size.width + 200) - 100
+                    let y = CGFloat(baseY) * size.height * 0.7
+                    let cloudWidth = size.width * 0.35 * CGFloat(scale)
+                    let cloudHeight = cloudWidth * 0.45
+
+                    let cloudRect = CGRect(x: x, y: y, width: cloudWidth, height: cloudHeight)
+                    let path = cloudPath(in: cloudRect, generator: &generator)
+                    context.opacity = scene.cloudOpacity
+                    context.addFilter(.blur(radius: 12))
+                    let shading = GraphicsContext.Shading.linearGradient(
+                        Gradient(stops: [
+                            .init(color: scene.cloudColor.opacity(0.25), location: 0),
+                            .init(color: scene.cloudColor.opacity(0.6), location: 0.4),
+                            .init(color: scene.cloudColor.opacity(0.85), location: 1)
+                        ]),
+                        startPoint: CGPoint(x: cloudRect.midX, y: cloudRect.minY),
+                        endPoint: CGPoint(x: cloudRect.midX, y: cloudRect.maxY)
+                    )
+                    context.fill(path, with: shading)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+
+    private func cloudPath(in rect: CGRect, generator: inout SeededGenerator) -> Path {
+        var path = Path()
+        let circles = [
+            CGRect(x: rect.minX, y: rect.midY - rect.height * 0.25, width: rect.width * 0.45, height: rect.height * 0.75),
+            CGRect(x: rect.midX - rect.width * 0.25, y: rect.minY, width: rect.width * 0.55, height: rect.height * 0.9),
+            CGRect(x: rect.maxX - rect.width * 0.45, y: rect.midY - rect.height * 0.3, width: rect.width * 0.5, height: rect.height * 0.8)
+        ]
+        for circle in circles {
+            path.addEllipse(in: circle)
+        }
+        let baseRect = CGRect(x: rect.minX + rect.width * 0.1, y: rect.midY, width: rect.width * 0.8, height: rect.height * 0.6)
+        path.addRoundedRect(in: baseRect, cornerSize: CGSize(width: rect.height * 0.3, height: rect.height * 0.25))
+        return path
+    }
+}
+
+private struct SunLayer: View {
+    let scene: ShiftSceneConfig
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                guard scene.sunEnabled else { return }
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                let progress = (time * scene.sunSpeed).truncatingRemainder(dividingBy: 1)
+                let angle = Double.pi * (progress - 0.5)
+                let baseRadius = size.width * 0.12
+                let arcHeight = size.height * scene.sunArcHeight
+                let centerX = size.width * 0.5 + CGFloat(cos(angle)) * size.width * 0.35
+                let centerY = size.height * 0.75 - CGFloat(sin(angle)) * arcHeight
+
+                let fadeStart: Double = 0.8
+                let fadeProgress: Double
+                if progress >= fadeStart {
+                    fadeProgress = max(0, 1 - (progress - fadeStart) / (1 - fadeStart))
+                } else {
+                    fadeProgress = 1
+                }
+                let easedFade = pow(fadeProgress, 1.4)
+                let radius = baseRadius * CGFloat(1 + (1 - easedFade) * 0.9)
+                let sunRect = CGRect(x: centerX - radius, y: centerY - radius, width: radius * 2, height: radius * 2)
+
+                context.drawLayer { layer in
+                    layer.addFilter(.blur(radius: 18))
+                    layer.fill(
+                        Path(ellipseIn: sunRect.insetBy(dx: -radius * 0.6, dy: -radius * 0.6)),
+                        with: .radialGradient(
+                            Gradient(colors: [
+                                scene.sunGlowColor.opacity(0.55 * easedFade),
+                                scene.sunGlowColor.opacity(0)
+                            ]),
+                            center: CGPoint(x: centerX, y: centerY),
+                            startRadius: radius * 0.2,
+                            endRadius: radius * 1.6
+                        )
+                    )
+                }
+
+                context.fill(
+                    Path(ellipseIn: sunRect),
+                    with: .radialGradient(
+                        Gradient(colors: [
+                            scene.sunColor.opacity(easedFade),
+                            scene.sunColor.opacity(0.2 * easedFade)
+                        ]),
+                        center: CGPoint(x: centerX, y: centerY),
+                        startRadius: radius * 0.1,
+                        endRadius: radius
+                    )
+                )
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct StarfieldLayer: View {
+    let scene: ShiftSceneConfig
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                guard scene.starsEnabled, scene.starCount > 0 else { return }
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                for index in 0..<scene.starCount {
+                    let seed = UInt64(truncatingIfNeeded: index &+ 31) &* 0x94D049BB133111EB &+ 0x2545F4914F6CDD1D
+                    var generator = SeededGenerator(seed: seed)
+                    let x = CGFloat(Double.random(in: 0...1, using: &generator)) * size.width
+                    let y = CGFloat(Double.random(in: 0...0.6, using: &generator)) * size.height
+                    let baseSize = CGFloat(Double.random(in: 1.8...3.2, using: &generator))
+                    let speed = Double.random(in: 0.25...0.55, using: &generator)
+                    let phase = Double.random(in: 0...Double.pi * 2, using: &generator)
+                    let shaping = Double.random(in: 2.4...4.0, using: &generator)
+                    let twinkle = sin(time * scene.starTwinkle * speed + phase)
+                    let normalized = (twinkle + 1) / 2
+                    let eased = pow(normalized, shaping)
+                    context.opacity = eased
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: x, y: y, width: baseSize * CGFloat(0.55 + 0.85 * eased), height: baseSize * CGFloat(0.55 + 0.85 * eased))),
+                        with: .color(scene.starColor)
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+private struct ShootingStarLayer: View {
+    let scene: ShiftSceneConfig
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, size in
+                guard scene.shootingStarsEnabled, scene.shootingStarCount > 0 else { return }
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                let baseFrequency = max(scene.shootingStarFrequency, 0.01)
+
+                for index in 0..<scene.shootingStarCount {
+                    let seed = UInt64(truncatingIfNeeded: index &+ 57) &* 0x2545F4914F6CDD1D &+ 0x9E3779B97F4A7C15
+                    var generator = SeededGenerator(seed: seed)
+                    let phaseOffset = Double.random(in: 0.0...1.0, using: &generator)
+                    let startYOffset = Double.random(in: 0.08...0.28, using: &generator)
+                    let laneTilt = Double.random(in: 0.22...0.42, using: &generator)
+                    let travel = Double.random(in: 1.35...1.55, using: &generator) * Double(size.width)
+                    let startXOffset = Double.random(in: (-0.35)...(-0.18), using: &generator)
+                    let headGlow = Double.random(in: 9.0...14.0, using: &generator)
+                    let blurRadius = Double.random(in: 1.6...2.3, using: &generator)
+                    let tailScale = Double.random(in: 0.85...1.25, using: &generator)
+
+                    let cycle = (time * baseFrequency + phaseOffset).truncatingRemainder(dividingBy: 1)
+                    guard cycle < 0.35 else { continue }
+
+                    let phase = cycle / 0.35
+                    let easedPhase = pow(phase, max(scene.shootingStarSpeed, 0.5))
+
+                    let startPoint = CGPoint(
+                        x: size.width * CGFloat(startXOffset),
+                        y: size.height * CGFloat(startYOffset)
+                    )
+
+                    let direction = CGVector(dx: 1, dy: laneTilt)
+                    let norm = sqrt(direction.dx * direction.dx + direction.dy * direction.dy)
+                    let unit = CGVector(dx: direction.dx / norm, dy: direction.dy / norm)
+
+                    let headDistance = CGFloat(travel) * CGFloat(easedPhase)
+                    let head = CGPoint(
+                        x: startPoint.x + unit.dx * headDistance,
+                        y: startPoint.y + unit.dy * headDistance
+                    )
+                    let tailLength = size.width * CGFloat(scene.shootingStarLength) * CGFloat(tailScale)
+                    let tail = CGPoint(
+                        x: head.x - unit.dx * tailLength,
+                        y: head.y - unit.dy * tailLength
+                    )
+
+                    context.drawLayer { layer in
+                        layer.addFilter(.blur(radius: 6))
+                        layer.fill(
+                            Path(ellipseIn: CGRect(x: head.x - headGlow, y: head.y - headGlow, width: headGlow * 2, height: headGlow * 2)),
+                            with: .radialGradient(
+                                Gradient(colors: [
+                                    scene.shootingStarColor.opacity(0.95),
+                                    scene.shootingStarColor.opacity(0)
+                                ]),
+                                center: head,
+                                startRadius: 0,
+                                endRadius: headGlow
+                            )
+                        )
+                    }
+
+                    context.drawLayer { layer in
+                        layer.addFilter(.blur(radius: blurRadius))
+                        layer.stroke(
+                            Path { path in
+                                path.move(to: tail)
+                                path.addLine(to: head)
+                            },
+                            with: .linearGradient(
+                                Gradient(stops: [
+                                    .init(color: scene.shootingStarColor.opacity(0), location: 0),
+                                    .init(color: scene.shootingStarColor.opacity(0.4), location: 0.45),
+                                    .init(color: scene.shootingStarColor.opacity(0.95), location: 1)
+                                ]),
+                                startPoint: tail,
+                                endPoint: head
+                            ),
+                            style: StrokeStyle(lineWidth: 2.1, lineCap: .round)
+                        )
+                    }
+
+                    context.fill(
+                        Path(ellipseIn: CGRect(x: head.x - 3.5, y: head.y - 3.5, width: 7, height: 7)),
+                        with: .color(scene.shootingStarColor)
+                    )
+                }
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
 private struct ShiftSceneConfig {
     struct GradientSpec {
         let colors: [Color]
@@ -539,6 +870,26 @@ private struct ShiftSceneConfig {
     let lightSpeed: Double
     let lightCount: Int
     let lightBlur: CGFloat
+    let cloudsEnabled: Bool
+    let cloudColor: Color
+    let cloudCount: Int
+    let cloudSpeed: Double
+    let cloudOpacity: Double
+    let sunEnabled: Bool
+    let sunColor: Color
+    let sunGlowColor: Color
+    let sunSpeed: Double
+    let sunArcHeight: Double
+    let starsEnabled: Bool
+    let starColor: Color
+    let starCount: Int
+    let starTwinkle: Double
+    let shootingStarsEnabled: Bool
+    let shootingStarColor: Color
+    let shootingStarFrequency: Double
+    let shootingStarSpeed: Double
+    let shootingStarLength: Double
+    let shootingStarCount: Int
 }
 
 private struct SeededGenerator: RandomNumberGenerator {
@@ -576,7 +927,27 @@ private extension ShiftType {
                 lightSwing: 0.35,
                 lightSpeed: 0.85,
                 lightCount: 5,
-                lightBlur: 26
+                lightBlur: 26,
+                cloudsEnabled: true,
+                cloudColor: Color(hex: 0xE4F2FF),
+                cloudCount: 5,
+                cloudSpeed: 0.02,
+                cloudOpacity: 0.75,
+                sunEnabled: false,
+                sunColor: Color(hex: 0xFFE28D),
+                sunGlowColor: Color(hex: 0xFFF3C1),
+                sunSpeed: 0.0,
+                sunArcHeight: 0.0,
+                starsEnabled: false,
+                starColor: Color.white,
+                starCount: 0,
+                starTwinkle: 0.0,
+                shootingStarsEnabled: false,
+                shootingStarColor: Color.white,
+                shootingStarFrequency: 0.0,
+                shootingStarSpeed: 0.0,
+                shootingStarLength: 0.0,
+                shootingStarCount: 0
             )
         case .afternoon:
             return ShiftSceneConfig(
@@ -597,7 +968,27 @@ private extension ShiftType {
                 lightSwing: 0.42,
                 lightSpeed: 1.05,
                 lightCount: 6,
-                lightBlur: 24
+                lightBlur: 24,
+                cloudsEnabled: false,
+                cloudColor: Color.white.opacity(0.75),
+                cloudCount: 0,
+                cloudSpeed: 0,
+                cloudOpacity: 0,
+                sunEnabled: true,
+                sunColor: Color(hex: 0xFFCE73),
+                sunGlowColor: Color(hex: 0xFFD9A0),
+                sunSpeed: 0.08,
+                sunArcHeight: 0.38,
+                starsEnabled: false,
+                starColor: Color.white,
+                starCount: 0,
+                starTwinkle: 0,
+                shootingStarsEnabled: false,
+                shootingStarColor: Color.white,
+                shootingStarFrequency: 0,
+                shootingStarSpeed: 0,
+                shootingStarLength: 0,
+                shootingStarCount: 0
             )
         case .evening:
             return ShiftSceneConfig(
@@ -618,7 +1009,27 @@ private extension ShiftType {
                 lightSwing: 0.28,
                 lightSpeed: 0.7,
                 lightCount: 4,
-                lightBlur: 34
+                lightBlur: 34,
+                cloudsEnabled: false,
+                cloudColor: Color.white.opacity(0.6),
+                cloudCount: 0,
+                cloudSpeed: 0,
+                cloudOpacity: 0,
+                sunEnabled: false,
+                sunColor: Color.white,
+                sunGlowColor: Color.white,
+                sunSpeed: 0,
+                sunArcHeight: 0,
+                starsEnabled: true,
+                starColor: Color.white.opacity(0.9),
+                starCount: 110,
+                starTwinkle: 0.8,
+                shootingStarsEnabled: true,
+                shootingStarColor: Color.white.opacity(0.9),
+                shootingStarFrequency: 0.12,
+                shootingStarSpeed: 1.35,
+                shootingStarLength: 0.22,
+                shootingStarCount: 2
             )
         default:
             return ShiftSceneConfig(
@@ -639,7 +1050,27 @@ private extension ShiftType {
                 lightSwing: 0.2,
                 lightSpeed: 0.55,
                 lightCount: 3,
-                lightBlur: 20
+                lightBlur: 20,
+                cloudsEnabled: false,
+                cloudColor: Color.white.opacity(0.6),
+                cloudCount: 0,
+                cloudSpeed: 0,
+                cloudOpacity: 0,
+                sunEnabled: false,
+                sunColor: Color.white,
+                sunGlowColor: Color.white,
+                sunSpeed: 0,
+                sunArcHeight: 0,
+                starsEnabled: false,
+                starColor: Color.white,
+                starCount: 0,
+                starTwinkle: 0,
+                shootingStarsEnabled: false,
+                shootingStarColor: Color.white,
+                shootingStarFrequency: 0,
+                shootingStarSpeed: 0,
+                shootingStarLength: 0,
+                shootingStarCount: 0
             )
         }
     }
