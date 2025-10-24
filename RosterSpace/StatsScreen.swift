@@ -193,12 +193,19 @@ struct StatsScreen: View {
                         shiftDistributionChart(stats.shiftCounts)
                     }
 
-        StatsCard(
-            title: "班次趋势折线图",
-            subtitle: stats.shiftTrendSeries.isEmpty ? "暂无班次趋势" : "按月统计早/中/晚班与休息次数"
-        ) {
-            shiftTrendChart()
-        }
+                    StatsCard(
+                        title: "班次趋势折线图",
+                        subtitle: stats.shiftTrendSeries.isEmpty ? "暂无班次趋势" : "按月统计早/中/晚班与休息次数"
+                    ) {
+                        shiftTrendChart()
+                    }
+
+                    StatsCard(
+                        title: "年度工作热力图",
+                        subtitle: stats.polarSeries.isEmpty ? "暂无班次数据" : "按周展示出勤天数"
+                    ) {
+                        yearHeatmapChart()
+                    }
 
         StatsCard(
             title: "共事频次排行榜",
@@ -395,6 +402,70 @@ struct StatsScreen: View {
                     shiftLegend
                 }
             )
+        }
+    }
+
+    @ViewBuilder
+    private func yearHeatmapChart() -> some View {
+        let heatmap = stats.polarSeries
+        if heatmap.isEmpty {
+            StatsPlaceholder(message: "暂无班次数据")
+        } else {
+            let monthLabels = stats.monthSymbols
+            let weekLabels = stats.weekLabels
+            let colorScale = stats.heatmapColorScale
+            let lookup = Dictionary(uniqueKeysWithValues: heatmap.map { ("\($0.month)-\($0.weekIndex)", $0.workDays) })
+            let blockSize: CGFloat = 16
+            let spacing: CGFloat = 8
+            let labelWidth: CGFloat = blockSize * 2.2
+
+            VStack(alignment: .leading, spacing: spacing + 2) {
+                HStack(spacing: spacing) {
+                    Text("月度")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .frame(width: labelWidth, alignment: .leading)
+                    ForEach(0..<12, id: \.self) { month in
+                        Text(monthLabels[month % monthLabels.count])
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(width: blockSize)
+                    }
+                }
+
+                ForEach(Array(weekLabels.enumerated()), id: \.offset) { index, label in
+                    HStack(spacing: spacing) {
+                        Text(label)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .frame(width: labelWidth, alignment: .leading)
+
+                        ForEach(0..<12, id: \.self) { month in
+                            let key = "\(month)-\(index)"
+                            let workDays = lookup[key] ?? 0
+                            RoundedRectangle(cornerRadius: 4, style: .continuous)
+                                .fill(stats.color(for: workDays, scale: colorScale))
+                                .frame(width: blockSize, height: blockSize)
+                        }
+                    }
+                }
+
+                HStack(spacing: spacing) {
+                    Text("少")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    ForEach(colorScale.indices, id: \.self) { idx in
+                        Circle()
+                            .fill(colorScale[idx])
+                            .frame(width: 8, height: 8)
+                    }
+                    Text("多")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.top, spacing)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -613,6 +684,13 @@ struct RosterStatistics {
         var id: String { "\(coworker)|\(shift.rawValue)" }
     }
 
+    struct PolarSlice: Identifiable {
+        let id = UUID()
+        let month: Int
+        let weekIndex: Int
+        let workDays: Int
+    }
+
     let calendar: Calendar
     let shiftAssignments: [Date: ShiftType]
     let coworkerAssignments: [Date: Set<String>]
@@ -695,12 +773,39 @@ struct RosterStatistics {
     var shiftTrendVisibleSpan: TimeInterval? {
         let months = expandedShiftTrendMonths
         guard let start = months.first else { return nil }
-        let calendar = calendar
+        let cal = calendar
         let visibleMonths = min(4, max(1, months.count))
-        guard let end = calendar.date(byAdding: .month, value: visibleMonths - 1, to: start) else {
+        guard let end = cal.date(byAdding: .month, value: visibleMonths - 1, to: start) else {
             return nil
         }
         return end.timeIntervalSince(start) + 1
+    }
+
+    var monthSymbols: [String] {
+        let formatter = DateFormatter()
+        formatter.calendar = calendar
+        formatter.locale = Locale(identifier: "zh_CN")
+        return formatter.shortMonthSymbols ?? formatter.monthSymbols
+    }
+
+    var weekLabels: [String] {
+        ["第1周", "第2周", "第3周", "第4周", "第5周"]
+    }
+
+    var heatmapColorScale: [Color] {
+        [
+            Color.gray.opacity(0.2),
+            Color.green.opacity(0.25),
+            Color.green.opacity(0.45),
+            Color.green.opacity(0.65),
+            Color.green.opacity(0.85)
+        ]
+    }
+
+    func color(for workDays: Int, scale: [Color]) -> Color {
+        guard workDays > 0 else { return scale.first ?? .gray.opacity(0.1) }
+        let clamped = min(max(workDays, 1), scale.count - 1)
+        return scale[clamped]
     }
 
     private var coworkerTotals: [String: Int] {
@@ -780,6 +885,31 @@ struct RosterStatistics {
             CoworkerShiftEntry(coworker: name, shift: $0, count: 0)
         }
     }
+
+    var polarSeries: [PolarSlice] {
+        let trackedShifts = ShiftType.trendShifts
+        let groupedByMonthWeek = shiftAssignments.reduce(into: [Int: [Int: Int]]()) { result, entry in
+            let (date, shift) = entry
+            guard trackedShifts.contains(shift) else { return }
+            let month = calendar.component(.month, from: date) - 1
+            let weekOfMonth = calendar.component(.weekOfMonth, from: date) - 1
+            result[month, default: [:]][weekOfMonth, default: 0] += 1
+        }
+
+        var cells: [PolarSlice] = []
+        for month in 0..<12 {
+            let weekly = groupedByMonthWeek[month] ?? [:]
+            let maxWeek = (weekly.keys.max() ?? -1) + 1
+            let totalWeeks = max(maxWeek, 5)
+            for week in 0..<totalWeeks {
+                let workDays = weekly[week] ?? 0
+                cells.append(
+                    PolarSlice(month: month, weekIndex: week, workDays: workDays)
+                )
+            }
+        }
+        return cells
+    }
 }
 
 extension ShiftType {
@@ -813,7 +943,7 @@ extension ShiftType {
 
 extension View {
     @ViewBuilder
-    func ifLet<T>(_ value: T?, transform: (Self, T) -> some View) -> some View {
+    func ifLet<T, Content: View>(_ value: T?, transform: (Self, T) -> Content) -> some View {
         if let value {
             transform(self, value)
         } else {
