@@ -469,6 +469,9 @@ private struct DynamicShiftBackdrop: View {
             let scene = shift.sceneConfig
             ZStack {
                 GradientLayer(scene: scene)
+                if scene.waves != nil {
+                    WaveLayer(scene: scene)
+                }
                 ParticlesLayer(scene: scene, size: proxy.size)
                 if scene.cloudsEnabled {
                     CloudLayer(scene: scene)
@@ -555,6 +558,124 @@ private struct ParticlesLayer: View {
                 }
             }
         }
+    }
+}
+
+private struct WaveLayer: View {
+    let scene: ShiftSceneConfig
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            Canvas { context, canvasSize in
+                guard let waves = scene.waves else { return }
+                let time = timeline.date.timeIntervalSinceReferenceDate
+
+                for layer in waves.layers {
+                    let path = wavePath(for: canvasSize, layer: layer, time: time)
+                    context.drawLayer { layerContext in
+                        layerContext.addFilter(.blur(radius: layer.blur))
+                        layerContext.opacity = layer.opacity
+                        layerContext.fill(path, with: .color(layer.color))
+                    }
+                }
+
+                if let highlight = waves.highlight {
+                    let path = highlightPath(for: canvasSize, highlight: highlight, time: time)
+                    context.drawLayer { layerContext in
+                        layerContext.addFilter(.blur(radius: highlight.thickness * 0.5))
+                        layerContext.stroke(
+                            path,
+                            with: .color(highlight.color.opacity(highlight.opacity)),
+                            style: StrokeStyle(lineWidth: highlight.thickness, lineCap: .round, lineJoin: .round)
+                        )
+                    }
+                }
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+    }
+
+    private func wavePath(for size: CGSize, layer: ShiftSceneConfig.WaveSpec.Layer, time: TimeInterval) -> Path {
+        var path = Path()
+        let baseline = size.height * layer.baseHeight
+        let amplitude = size.height * layer.amplitude
+        let wavelength = max(32, size.width * layer.wavelength)
+        let surge = surgeValue(
+            time: time,
+            speed: layer.speed,
+            phase: layer.phase,
+            riseExponent: layer.surgeRiseExponent,
+            fallExponent: layer.surgeFallExponent
+        )
+        let verticalShift = size.height * layer.surgeHeight * surge
+        let dynamicAmplitude = amplitude * (0.55 + 0.45 * surge)
+        let sampleCount = max(Int(size.width / 8), 140)
+        let step = size.width / CGFloat(sampleCount)
+
+        path.move(to: CGPoint(x: 0, y: size.height + 40))
+        var x: CGFloat = 0
+        for index in 0...sampleCount {
+            x = CGFloat(index) * step
+            let angle = (x / wavelength) * (CGFloat.pi * 2)
+            let crest = CGFloat(sin(Double(angle)))
+            let envelope = 0.6 + 0.4 * cos(Double(angle) * 0.5)
+            let waveY = (baseline - verticalShift) + crest * dynamicAmplitude * CGFloat(envelope)
+            if index == 0 {
+                path.addLine(to: CGPoint(x: 0, y: waveY))
+            } else {
+                path.addLine(to: CGPoint(x: x, y: waveY))
+            }
+        }
+        path.addLine(to: CGPoint(x: size.width, y: size.height + 40))
+        path.closeSubpath()
+        return path
+    }
+
+    private func highlightPath(for size: CGSize, highlight: ShiftSceneConfig.WaveSpec.Highlight, time: TimeInterval) -> Path {
+        var path = Path()
+        let baseline = size.height * highlight.baseHeight
+        let amplitude = size.height * highlight.amplitude
+        let wavelength = max(32, size.width * highlight.wavelength)
+        let surge = surgeValue(
+            time: time,
+            speed: highlight.speed,
+            phase: highlight.phase,
+            riseExponent: highlight.surgeRiseExponent,
+            fallExponent: highlight.surgeFallExponent
+        )
+        let verticalShift = size.height * highlight.surgeHeight * surge
+        let dynamicAmplitude = amplitude * (0.4 + 0.6 * surge)
+        let extraGlint = CGFloat(surge) * 0.02
+        let sampleCount = max(Int(size.width / 6), 160)
+        let step = size.width / CGFloat(sampleCount)
+
+        for index in 0...sampleCount {
+            let x = CGFloat(index) * step
+            let angle = (x / wavelength) * (CGFloat.pi * 2)
+            let crest = CGFloat(sin(Double(angle)))
+            let glint = CGFloat(cos(Double(angle) * 0.7)) * extraGlint * size.height
+            let waveY = (baseline - verticalShift) + crest * dynamicAmplitude - glint
+            let point = CGPoint(x: x, y: waveY)
+            if index == 0 {
+                path.move(to: point)
+            } else {
+                path.addLine(to: point)
+            }
+        }
+
+        return path
+    }
+
+    private func surgeValue(time: TimeInterval, speed: Double, phase: Double, riseExponent: Double, fallExponent: Double) -> CGFloat {
+        let normalized = (sin(time * speed + phase) + 1) * 0.5
+        let clampedRise = max(riseExponent, 0.01)
+        let clampedFall = max(fallExponent, 0.01)
+        let rise = pow(normalized, clampedRise)
+        let fall = pow(1 - normalized, clampedFall)
+        let total = rise + fall
+        guard total > Double.ulpOfOne else { return CGFloat(normalized) }
+        return CGFloat(rise / total)
     }
 }
 
@@ -876,6 +997,39 @@ private struct ShiftSceneConfig {
         let end: UnitPoint
     }
 
+    struct WaveSpec {
+        struct Layer {
+            let color: Color
+            let amplitude: CGFloat
+            let wavelength: CGFloat
+            let speed: Double
+            let baseHeight: CGFloat
+            let phase: Double
+            let blur: CGFloat
+            let opacity: Double
+            let surgeHeight: CGFloat
+            let surgeRiseExponent: Double
+            let surgeFallExponent: Double
+        }
+
+        struct Highlight {
+            let color: Color
+            let amplitude: CGFloat
+            let wavelength: CGFloat
+            let speed: Double
+            let baseHeight: CGFloat
+            let phase: Double
+            let thickness: CGFloat
+            let opacity: Double
+            let surgeHeight: CGFloat
+            let surgeRiseExponent: Double
+            let surgeFallExponent: Double
+        }
+
+        let layers: [Layer]
+        let highlight: Highlight?
+    }
+
     let gradient: GradientSpec
     let particleColor: Color
     let particleCount: Int
@@ -909,6 +1063,7 @@ private struct ShiftSceneConfig {
     let shootingStarSpeed: Double
     let shootingStarLength: Double
     let shootingStarCount: Int
+    let waves: WaveSpec?
 }
 
 private struct SeededGenerator: RandomNumberGenerator {
@@ -927,6 +1082,55 @@ private struct SeededGenerator: RandomNumberGenerator {
 private extension ShiftType {
     var sceneConfig: ShiftSceneConfig {
         switch self {
+        case .rest:
+            return ShiftSceneConfig(
+                gradient: .init(
+                    colors: [Color(hex: 0x8FD5F4), Color(hex: 0xCBEFFF), Color(hex: 0xF3FBFF)],
+                    overlayColors: [Color.white.opacity(0.42), Color.clear],
+                    start: .top,
+                    end: .bottom
+                ),
+                particleColor: Color.white.opacity(0.36),
+                particleCount: 110,
+                particleSpeed: 0.06,
+                particleBaseSize: 20,
+                particleBlur: 8,
+                verticalLift: 0.014,
+                lightColor: Color(hex: 0xA7E2FF),
+                lightOpacity: 0.32,
+                lightSwing: 0.22,
+                lightSpeed: 0.55,
+                lightCount: 4,
+                lightBlur: 30,
+                cloudsEnabled: false,
+                cloudColor: .clear,
+                cloudCount: 0,
+                cloudSpeed: 0,
+                cloudOpacity: 0,
+                sunEnabled: false,
+                sunColor: Color.white,
+                sunGlowColor: Color.white,
+                sunSpeed: 0,
+                sunArcHeight: 0,
+                starsEnabled: false,
+                starColor: Color.white,
+                starCount: 0,
+                starTwinkle: 0,
+                shootingStarsEnabled: false,
+                shootingStarColor: Color.white,
+                shootingStarFrequency: 0,
+                shootingStarSpeed: 0,
+                shootingStarLength: 0,
+                shootingStarCount: 0,
+                waves: .init(
+                    layers: [
+                        .init(color: Color(hex: 0x6EC4F5).opacity(0.7), amplitude: 0.042, wavelength: 1.55, speed: 0.32, baseHeight: 0.72, phase: 0, blur: 24, opacity: 0.82, surgeHeight: 0.085, surgeRiseExponent: 1.4, surgeFallExponent: 2.6),
+                        .init(color: Color(hex: 0x8ADDF7).opacity(0.75), amplitude: 0.058, wavelength: 1.1, speed: 0.38, baseHeight: 0.77, phase: .pi / 4, blur: 18, opacity: 0.86, surgeHeight: 0.095, surgeRiseExponent: 1.5, surgeFallExponent: 2.4),
+                        .init(color: Color(hex: 0xB3F0FF).opacity(0.8), amplitude: 0.075, wavelength: 0.85, speed: 0.46, baseHeight: 0.82, phase: .pi * 0.72, blur: 14, opacity: 0.9, surgeHeight: 0.11, surgeRiseExponent: 1.65, surgeFallExponent: 2.1)
+                    ],
+                    highlight: .init(color: Color.white.opacity(0.9), amplitude: 0.02, wavelength: 0.68, speed: 0.52, baseHeight: 0.8, phase: .pi / 3, thickness: 2.2, opacity: 0.54, surgeHeight: 0.12, surgeRiseExponent: 1.35, surgeFallExponent: 2.2)
+                )
+            )
         case .morning:
             return ShiftSceneConfig(
                 gradient: .init(
@@ -966,7 +1170,8 @@ private extension ShiftType {
                 shootingStarFrequency: 0.0,
                 shootingStarSpeed: 0.0,
                 shootingStarLength: 0.0,
-                shootingStarCount: 0
+                shootingStarCount: 0,
+                waves: nil
             )
         case .afternoon:
             return ShiftSceneConfig(
@@ -1007,7 +1212,8 @@ private extension ShiftType {
                 shootingStarFrequency: 0,
                 shootingStarSpeed: 0,
                 shootingStarLength: 0,
-                shootingStarCount: 0
+                shootingStarCount: 0,
+                waves: nil
             )
         case .evening:
             return ShiftSceneConfig(
@@ -1048,9 +1254,10 @@ private extension ShiftType {
                 shootingStarFrequency: 0.12,
                 shootingStarSpeed: 1.35,
                 shootingStarLength: 0.22,
-                shootingStarCount: 2
+                shootingStarCount: 2,
+                waves: nil
             )
-        default:
+        case .none:
             return ShiftSceneConfig(
                 gradient: .init(
                     colors: [Color(hex: 0xEEF1F6), Color(hex: 0xF6F7FA)],
@@ -1089,7 +1296,8 @@ private extension ShiftType {
                 shootingStarFrequency: 0,
                 shootingStarSpeed: 0,
                 shootingStarLength: 0,
-                shootingStarCount: 0
+                shootingStarCount: 0,
+                waves: nil
             )
         }
     }
