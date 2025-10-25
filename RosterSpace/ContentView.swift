@@ -8,7 +8,14 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var dataStore = RosterDataStore()
+    @EnvironmentObject private var appViewModel: AppViewModel
+
+    private var alertBinding: Binding<AppViewModel.AppAlert?> {
+        Binding(
+            get: { appViewModel.alert },
+            set: { appViewModel.alert = $0 }
+        )
+    }
 
     var body: some View {
         TabView {
@@ -27,7 +34,9 @@ struct ContentView: View {
                     Label("我的", systemImage: "person.crop.circle")
                 }
         }
-        .environmentObject(dataStore)
+        .alert(item: alertBinding) { alert in
+            Alert(title: Text(alert.message))
+        }
     }
 }
 
@@ -279,10 +288,27 @@ struct CalendarScreen: View {
 
 struct SettingsScreen: View {
     @EnvironmentObject private var store: RosterDataStore
+    @EnvironmentObject private var appViewModel: AppViewModel
+    private let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.locale = Locale(identifier: "zh_CN")
+        formatter.unitsStyle = .full
+        return formatter
+    }()
 
     var body: some View {
         NavigationStack {
             List {
+                Section {
+                    NavigationLink {
+                        AccountManagementView()
+                    } label: {
+                        AccountEntryRow()
+                    }
+                }
+
+                syncSection
+
                 Section {
                     NavigationLink {
                         ColleagueManagementView()
@@ -293,6 +319,35 @@ struct SettingsScreen: View {
                 }
             }
             .navigationTitle("我的")
+        }
+    }
+
+    private var syncSection: some View {
+        Section(header: Text("同步状态")) {
+            HStack {
+                Label("Supabase 同步", systemImage: "arrow.triangle.2.circlepath")
+                Spacer()
+                if appViewModel.isSyncing {
+                    ProgressView()
+                } else if let last = appViewModel.lastSuccessfulSyncAt {
+                    Text(relativeDateFormatter.localizedString(for: last, relativeTo: Date()))
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("等待首次同步")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Button {
+                Task {
+                    await appViewModel.refreshRosterSnapshot()
+                }
+            } label: {
+                Text("手动刷新")
+            }
+            .disabled(appViewModel.isSyncing)
         }
     }
 }
@@ -1353,5 +1408,10 @@ extension Calendar {
 }
 
 #Preview {
-    ContentView()
+    let viewModel = AppViewModel(dataStore: RosterDataStore())
+    viewModel.dataStore.addColleague("示例同事")
+    viewModel.dataStore.setShift(.morning, for: Date())
+    return ContentView()
+        .environmentObject(viewModel)
+        .environmentObject(viewModel.dataStore)
 }

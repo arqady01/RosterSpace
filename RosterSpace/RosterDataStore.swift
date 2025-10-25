@@ -15,6 +15,8 @@ final class RosterDataStore: ObservableObject {
 
     let calendar: Calendar
     private let currentDate: () -> Date
+    private var syncHandler: ((RosterSyncRequest) -> Void)?
+    private var isApplyingRemoteSnapshot = false
 
     init(
         calendar: Calendar = .mondayFirst,
@@ -27,6 +29,27 @@ final class RosterDataStore: ObservableObject {
         self.coworkerAssignments = [:]
 
         seedInitialData()
+    }
+
+    func setSyncHandler(_ handler: @escaping (RosterSyncRequest) -> Void) {
+        syncHandler = handler
+    }
+
+    func applyRemoteSnapshot(_ snapshot: RosterSyncSnapshot) {
+        isApplyingRemoteSnapshot = true
+        colleagues = snapshot.colleagues
+        shiftAssignments = snapshot.shiftAssignments
+        coworkerAssignments = snapshot.coworkerAssignments
+        isApplyingRemoteSnapshot = false
+    }
+
+    func resetForSignedOut() {
+        isApplyingRemoteSnapshot = true
+        colleagues = []
+        shiftAssignments = [:]
+        coworkerAssignments = [:]
+        seedInitialData()
+        isApplyingRemoteSnapshot = false
     }
 
     func ensureMonthAvailable(containing date: Date) {
@@ -53,7 +76,7 @@ final class RosterDataStore: ObservableObject {
 
     func coworkers(on date: Date) -> Set<String> {
         let normalized = normalized(date)
-        return coworkerAssignments[normalized] ?? Set()
+        return coworkerAssignments[normalized] ?? Set<String>()
     }
 
     func setShift(_ shift: ShiftType, for date: Date) {
@@ -62,8 +85,10 @@ final class RosterDataStore: ObservableObject {
 
         shiftAssignments[normalized] = shift
         if !shift.allowsCoworkers {
-            coworkerAssignments[normalized] = Set()
+            coworkerAssignments[normalized] = Set<String>()
+            notifySync(.updateCoworkers(normalized, Set<String>()))
         }
+        notifySync(.upsertShift(normalized, shift))
     }
 
     func setCoworkers(_ selections: Set<String>, for date: Date) {
@@ -71,7 +96,9 @@ final class RosterDataStore: ObservableObject {
         ensureDayAvailable(normalized)
 
         let validNames = Set(colleagues)
-        coworkerAssignments[normalized] = selections.filter { validNames.contains($0) }
+        let filtered = Set(selections.filter { validNames.contains($0) })
+        coworkerAssignments[normalized] = filtered
+        notifySync(.updateCoworkers(normalized, filtered))
     }
 
     func addColleague(_ name: String) {
@@ -80,16 +107,19 @@ final class RosterDataStore: ObservableObject {
         let normalizedName = trimmed.lowercased()
         guard !colleagues.contains(where: { $0.lowercased() == normalizedName }) else { return }
         colleagues.append(trimmed)
+        notifySync(.replaceColleagues(colleagues))
     }
 
     func removeColleagues(at offsets: IndexSet) {
         colleagues.remove(atOffsets: offsets)
         pruneCoworkers()
+        notifySync(.replaceColleagues(colleagues))
     }
 
     func overwriteColleagues(with names: [String]) {
         colleagues = names
         pruneCoworkers()
+        notifySync(.replaceColleagues(colleagues))
     }
 
     func allActiveDates() -> [Date] {
@@ -120,9 +150,23 @@ final class RosterDataStore: ObservableObject {
 
     private func pruneCoworkers() {
         let validNames = Set(colleagues)
+        var affectedDates: [Date] = []
         for (date, selections) in coworkerAssignments {
-            let filtered = selections.filter { validNames.contains($0) }
-            coworkerAssignments[date] = Set(filtered)
+            let filtered = Set(selections.filter { validNames.contains($0) })
+            if filtered != selections {
+                coworkerAssignments[date] = filtered
+                affectedDates.append(date)
+            }
         }
+
+        for date in affectedDates {
+            let latest = coworkerAssignments[date] ?? Set<String>()
+            notifySync(.updateCoworkers(date, latest))
+        }
+    }
+
+    private func notifySync(_ request: RosterSyncRequest) {
+        guard !isApplyingRemoteSnapshot else { return }
+        syncHandler?(request)
     }
 }

@@ -9,9 +9,13 @@ import SwiftUI
 
 @main
 struct RosterSpaceApp: App {
+    @StateObject private var appViewModel = AppViewModel(dataStore: RosterDataStore())
+
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(appViewModel)
+                .environmentObject(appViewModel.dataStore)
         }
     }
 }
