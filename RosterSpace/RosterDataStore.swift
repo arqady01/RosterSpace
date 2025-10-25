@@ -62,7 +62,7 @@ final class RosterDataStore: ObservableObject {
     func ensureDayAvailable(_ date: Date) {
         let normalized = normalized(date)
         if shiftAssignments[normalized] == nil {
-            shiftAssignments[normalized] = ShiftType.defaultAssignment(for: normalized, calendar: calendar)
+            shiftAssignments[normalized] = .none
         }
         if coworkerAssignments[normalized] == nil {
             coworkerAssignments[normalized] = Set<String>()

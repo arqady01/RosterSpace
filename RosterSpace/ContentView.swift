@@ -184,11 +184,9 @@ struct CalendarScreen: View {
     private var activeShift: ShiftType {
         if let selectedDate {
             let normalized = calendar.startOfDay(for: selectedDate)
-            store.ensureDayAvailable(normalized)
             return store.shift(on: normalized)
         }
         let today = calendar.startOfDay(for: Date())
-        store.ensureDayAvailable(today)
         return store.shift(on: today)
     }
 
