@@ -241,7 +241,7 @@ struct StatsScreen: View {
             .navigationTitle("统计")
         }
         .onAppear(perform: sanitizeCoworkerSelections)
-        .onChange(of: store.colleagues) { _ in
+        .onChange(of: store.colleagues) { _, _ in
             sanitizeCoworkerSelections()
         }
     }
@@ -337,7 +337,6 @@ struct StatsScreen: View {
         }
     }
 
-    @ViewBuilder
     private func shiftTrendChart() -> some View {
         let months = stats.expandedShiftTrendMonths
         let actualMonths = stats.actualShiftTrendMonths

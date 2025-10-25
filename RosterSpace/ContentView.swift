@@ -1175,7 +1175,7 @@ private struct ShiftManagementView: View {
                     }
                 }
             }
-            .onChange(of: shift) { newValue in
+            .onChange(of: shift) { _, newValue in
                 if !newValue.allowsCoworkers {
                     coworkers.removeAll()
                 }
