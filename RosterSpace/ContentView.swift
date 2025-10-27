@@ -29,6 +29,11 @@ struct ContentView: View {
                     Label("统计", systemImage: "chart.bar.xaxis")
                 }
 
+            AIChatScreen()
+                .tabItem {
+                    Label("AI", systemImage: "sparkles")
+                }
+
             SettingsScreen()
                 .tabItem {
                     Label("我的", systemImage: "person.crop.circle")
