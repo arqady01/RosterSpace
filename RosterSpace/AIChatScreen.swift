@@ -15,6 +15,7 @@ struct AIChatScreen: View {
     @StateObject private var viewModel = AIChatViewModel()
     @State private var selectedItems: [PhotosPickerItem] = []
     @State private var isShowingAccountSheet = false
+    @State private var isShowingClearConfirmation = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -66,7 +67,19 @@ struct AIChatScreen: View {
             Text(error)
         }
 
-        let selectionApplied = alertApplied.onChange(of: selectedItems, perform: handleSelectionChange)
+        let clearConfirmationApplied = alertApplied.alert(
+            "确认清空会话？",
+            isPresented: $isShowingClearConfirmation
+        ) {
+            Button("取消", role: .cancel) { }
+            Button("清空", role: .destructive) {
+                viewModel.clearHistory()
+            }
+        } message: {
+            Text("这会删除当前会话的所有消息，且无法恢复。")
+        }
+
+        let selectionApplied = clearConfirmationApplied.onChange(of: selectedItems, perform: handleSelectionChange)
 
         return selectionApplied
     }
@@ -165,7 +178,7 @@ struct AIChatScreen: View {
 
                 if !viewModel.messages.isEmpty {
                     Button(role: .destructive) {
-                        viewModel.clearHistory()
+                        isShowingClearConfirmation = true
                     } label: {
                         Label("清空", systemImage: "trash")
                     }
@@ -222,10 +235,10 @@ struct AIChatScreen: View {
                 PhotosPicker(selection: $selectedItems, maxSelectionCount: 4, matching: .images) {
                     Image(systemName: "paperclip")
                         .font(.title2)
-                        .foregroundColor(.accentColor)
+                        .foregroundColor(.gray)
                         .frame(width: 32, height: 32)
                 }
-                .disabled(viewModel.isUploadingAttachment || viewModel.isStreaming)
+                .disabled(true)
 
                 VStack {
                     ZStack(alignment: .topLeading) {

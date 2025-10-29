@@ -1,0 +1,50 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode & Swift
+DerivedData/
+build/
+Build/
+*.xcodeproj/project.xcworkspace/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+*.moved-aside
+*.xcuserstate
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Package.resolved
+
+# CocoaPods
+Pods/
+Podfile.lock
+
+# Carthage
+Carthage/Build/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+
+# Certificates & profiles
+*.pem
+*.p12
+*.mobileprovision
+
+# Environment & secrets
+.env
+*.env
+supabase/.env
+supabase/.branches/
+supabase/.temp/
+supabase/**/*.key
+supabase/**/*.json
+
+# Logs
+*.log
+
