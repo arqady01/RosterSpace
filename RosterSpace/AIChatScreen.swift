@@ -18,22 +18,7 @@ struct AIChatScreen: View {
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
-        let toolbarApplied = navigationContent.toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Group {
-                    if case .signedIn = appViewModel.authStatus, !viewModel.messages.isEmpty {
-                        Button(role: .destructive) {
-                            viewModel.clearHistory()
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .help("清空当前会话历史")
-                    }
-                }
-            }
-        }
-
-        let appearApplied = toolbarApplied.onAppear {
+        let appearApplied = navigationContent.onAppear {
             viewModel.attachModelContext(modelContext)
             Task {
                 if case .signedIn = appViewModel.authStatus {
@@ -89,7 +74,6 @@ struct AIChatScreen: View {
     private var navigationContent: some View {
         NavigationStack {
             rootContent
-                .navigationTitle("AI 助手")
         }
     }
 
@@ -113,18 +97,22 @@ struct AIChatScreen: View {
     }
 
     private var chatLayout: some View {
-        VStack(spacing: 0) {
-            modelPicker
-            Divider()
-            messageList
-            Divider()
-            inputPanel
-                .padding(.horizontal)
-                .padding(.top, 8)
-                .padding(.bottom, 12)
-                .background(Color(.systemBackground))
+        ZStack {
+            Color(.systemGroupedBackground)
+                .ignoresSafeArea()
+
+            VStack(spacing: 0) {
+                modelPicker
+                Divider()
+                messageList
+                Divider()
+                inputPanel
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+                    .padding(.bottom, 12)
+                    .background(Color(.systemBackground))
+            }
         }
-        .background(Color(.systemGroupedBackground).ignoresSafeArea())
     }
 
     private var modelPicker: some View {
@@ -160,13 +148,30 @@ struct AIChatScreen: View {
             Spacer()
 
             if viewModel.isStreaming {
-                Label("正在生成", systemImage: "waveform.path")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            } else if let usage = viewModel.usageMetrics, let total = usage.totalTokens {
-                Label("Tokens: \(total)", systemImage: "number")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Label("Gen...", systemImage: "waveform.path")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    StreamingStatusBar()
+                        .frame(width: 80, height: 6)
+                }
+            } else {
+                if let usage = viewModel.usageMetrics, let total = usage.totalTokens {
+                    Label("Tokens: \(total)", systemImage: "number")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !viewModel.messages.isEmpty {
+                    Button(role: .destructive) {
+                        viewModel.clearHistory()
+                    } label: {
+                        Label("清空", systemImage: "trash")
+                    }
+                    .font(.footnote.weight(.semibold))
+                    .help("清空当前会话历史")
+                }
             }
         }
         .padding(.horizontal)
@@ -180,14 +185,17 @@ struct AIChatScreen: View {
                     ForEach(viewModel.messages) { message in
                         ChatMessageRow(
                             message: message,
-                            onRetry: viewModel.retryLastRequest,
-                            onRegenerate: viewModel.regenerateResponse
+                            onRetry: viewModel.retryLastRequest
                         )
                         .id(message.id)
                         .padding(.horizontal)
                     }
                 }
                 .padding(.vertical, 16)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                isInputFocused = false
             }
             .onChange(of: viewModel.activeScrollTarget) { _, target in
                 guard let target else { return }
@@ -229,7 +237,7 @@ struct AIChatScreen: View {
                         }
 
                         TextEditor(text: $viewModel.inputText)
-                            .frame(minHeight: 44, maxHeight: 140)
+                            .frame(height: 36)
                             .focused($isInputFocused)
                             .scrollContentBackground(.hidden)
                             .padding(4)
@@ -240,39 +248,26 @@ struct AIChatScreen: View {
                     }
                 }
 
-                if viewModel.isStreaming {
-                    Button {
+                Button {
+                    if viewModel.isStreaming {
                         viewModel.stopGeneration()
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.title2.weight(.semibold))
-                            .foregroundColor(.red)
-                    }
-                    .accessibilityLabel("停止生成")
-                } else {
-                    Button {
+                    } else {
                         viewModel.sendMessage()
                         isInputFocused = false
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
-                            .foregroundColor(viewModel.inputText.isEmpty && viewModel.draftAttachments.isEmpty ? .gray : .accentColor)
                     }
-                    .disabled(viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && viewModel.draftAttachments.isEmpty)
-                    .accessibilityLabel("发送消息")
+                } label: {
+                    Image(systemName: viewModel.isStreaming ? "stop.fill" : "arrow.up.circle.fill")
+                        .font(viewModel.isStreaming ? .title2.weight(.semibold) : .title2)
+                        .foregroundColor(viewModel.isStreaming ? .red : (viewModel.inputText.isEmpty && viewModel.draftAttachments.isEmpty ? .gray : .accentColor))
                 }
+                .disabled(!viewModel.isStreaming && viewModel.inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && viewModel.draftAttachments.isEmpty)
+                .accessibilityLabel(viewModel.isStreaming ? "停止生成" : "发送消息")
             }
 
             HStack(spacing: 16) {
                 if viewModel.canRetry() {
                     Button("重试") {
                         viewModel.retryLastRequest()
-                    }
-                }
-
-                if viewModel.canRegenerate() {
-                    Button("重新生成") {
-                        viewModel.regenerateResponse()
                     }
                 }
 
@@ -284,12 +279,87 @@ struct AIChatScreen: View {
     }
 }
 
-// MARK: - Subviews
+private struct StreamingStatusBar: View {
+    var body: some View {
+        GeometryReader { proxy in
+            TimelineView(.animation) { timeline in
+                let time = timeline.date.timeIntervalSinceReferenceDate
+                let width = proxy.size.width
+                let baseHighlightWidth = width * 0.45
+                let breath = CGFloat(0.75 + 0.2 * sin(time * 1.6))
+                let highlightWidth = max(baseHighlightWidth * breath, width * 0.22)
+                let availableRange = max((width - highlightWidth) / 2, 0)
+                let offset = sin(time * 1.8) * availableRange
+
+                ZStack {
+                    Capsule()
+                        .fill(Color.accentColor.opacity(0.18))
+
+                    Capsule()
+                        .fill(
+                            LinearGradient(
+                                colors: [
+                                    Color.accentColor.opacity(0),
+                                    Color.accentColor.opacity(0.85),
+                                    Color.accentColor.opacity(0)
+                                ],
+                                startPoint: .leading,
+                                endPoint: .trailing
+                            )
+                        )
+                        .frame(width: highlightWidth)
+                        .offset(x: offset)
+                        .blur(radius: 0.8)
+                        .opacity(0.95)
+                }
+                .frame(width: width, height: proxy.size.height)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private extension Color {
+    init(hexString: String) {
+        let sanitized = hexString.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        var value: UInt64 = 0
+        Scanner(string: sanitized).scanHexInt64(&value)
+
+        let red, green, blue, alpha: Double
+        switch sanitized.count {
+        case 3: // RGB (12-bit)
+            let r = (value >> 8) & 0xF
+            let g = (value >> 4) & 0xF
+            let b = value & 0xF
+            red = Double(r) / 15.0
+            green = Double(g) / 15.0
+            blue = Double(b) / 15.0
+            alpha = 1.0
+        case 6: // RGB (24-bit)
+            red = Double((value & 0xFF0000) >> 16) / 255.0
+            green = Double((value & 0x00FF00) >> 8) / 255.0
+            blue = Double(value & 0x0000FF) / 255.0
+            alpha = 1.0
+        case 8: // ARGB (32-bit)
+            alpha = Double((value & 0xFF000000) >> 24) / 255.0
+            red = Double((value & 0x00FF0000) >> 16) / 255.0
+            green = Double((value & 0x0000FF00) >> 8) / 255.0
+            blue = Double(value & 0x000000FF) / 255.0
+        default:
+            red = 1.0
+            green = 1.0
+            blue = 1.0
+            alpha = 0.0
+        }
+
+        self.init(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+    }
+}
 
 private struct ChatMessageRow: View {
     let message: AIMessageItem
     let onRetry: () -> Void
-    let onRegenerate: () -> Void
 
     var body: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 8) {
@@ -343,12 +413,9 @@ private struct ChatMessageRow: View {
             }
 
             if case .failed = message.state, message.role == .assistant {
-                HStack(spacing: 12) {
-                    Button("重试", action: onRetry)
-                    Button("重新生成", action: onRegenerate)
-                }
-                .font(.footnote.weight(.semibold))
-                .foregroundColor(.accentColor)
+                Button("重试", action: onRetry)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundColor(.accentColor)
             }
         }
     }
