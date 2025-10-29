@@ -76,7 +76,7 @@ struct AIChatScreen: View {
                 viewModel.clearHistory()
             }
         } message: {
-            Text("这会删除当前会话的所有消息，且无法恢复。")
+            Text("对话历史不同步，请谨慎删除。")
         }
 
         let selectionApplied = clearConfirmationApplied.onChange(of: selectedItems, perform: handleSelectionChange)
